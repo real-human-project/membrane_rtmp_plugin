@@ -15,9 +15,22 @@ defmodule Membrane.RTMP.Responses do
       # transaction ID is always 1 for connect request/responses
       tx_id: 1,
       properties: [
+        # Per RTMP spec, the first argument is the server "Properties Object"
+        # and the second is the "Information Object" (status). HaishinKit on
+        # iOS, however, looks at `arguments.first` for the `code`/`level`
+        # status fields — see `RTMPMessage.swift:340` and the guard in
+        # `RTMPConnection.on(status:)` / apivideo_live_stream's
+        # `rtmpStatusHandler`. Without `code` in the first arg, both bail out
+        # and the publish handshake stalls for ~27 seconds before HaishinKit
+        # falls back to a slower path. Mirror `code`/`level` into the first
+        # argument too so HaishinKit's first-arg lookup succeeds. Standard
+        # clients that key off the second arg (or use a responder pattern)
+        # still see the canonical status object below.
         %{
           "fmsVer" => "FMS/3,0,1,123",
-          "capabilities" => 31.0
+          "capabilities" => 31.0,
+          "level" => "status",
+          "code" => "NetConnection.Connect.Success"
         },
         %{
           "level" => "status",
