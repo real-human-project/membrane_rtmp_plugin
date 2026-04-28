@@ -39,7 +39,7 @@ defmodule Membrane.RTMP.Message do
     "additionalMedia" => Messages.AdditionalMedia
   }
 
-  @spec deserialize_message(type_id :: integer(), binary()) :: struct()
+  @spec deserialize_message(type_id :: integer(), binary()) :: struct() | :skip
   def deserialize_message(Header.type(:set_chunk_size), payload),
     do: Messages.SetChunkSize.deserialize(payload)
 
@@ -66,6 +66,16 @@ defmodule Membrane.RTMP.Message do
 
   def deserialize_message(Header.type(:video_message), payload),
     do: Messages.Video.deserialize(payload)
+
+  # Some encoders (e.g. HaishinKit on iOS, used by apivideo_live_stream)
+  # emit RTMP message type ids outside the spec-defined range. Treating
+  # those as fatal kills the parser GenServer and tears down the entire
+  # ingest. Tolerate them: return a `:skip` marker; the message_parser
+  # filters these out so consumers never see them, while
+  # `update_state_with_message` still records the header so subsequent
+  # type-3 chunks (which reference previous headers by chunk_stream_id)
+  # decompress correctly.
+  def deserialize_message(_unknown_type_id, _payload), do: :skip
 
   @spec chunk_payload(binary(), non_neg_integer(), non_neg_integer(), iolist()) :: iolist()
   def chunk_payload(payload, chunk_stream_id, chunk_size, acc \\ []) do

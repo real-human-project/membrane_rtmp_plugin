@@ -75,6 +75,12 @@ defmodule Membrane.RTMP.MessageParser do
 
   def parse_packet_messages(packet, message_parser, messages) do
     case handle_packet(packet, message_parser) do
+      # Unknown message types (see `Message.deserialize_message/2`'s catch-all)
+      # come back as `:skip` — drop them so consumers never see them, but keep
+      # parsing the rest of the buffer.
+      {_header, :skip, message_parser} ->
+        parse_packet_messages(<<>>, message_parser, messages)
+
       {header, message, message_parser} ->
         parse_packet_messages(<<>>, message_parser, [{header, message} | messages])
 
