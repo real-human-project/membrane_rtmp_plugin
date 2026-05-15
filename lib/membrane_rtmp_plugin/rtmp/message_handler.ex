@@ -232,6 +232,18 @@ defmodule Membrane.RTMP.MessageHandler do
     {:cont, state}
   end
 
+  # Treat a client-initiated publishing teardown (`FCUnpublish`/`closeStream`)
+  # as connection-closed even before the TCP FIN arrives. Some clients
+  # (notably RootEncoder on Android) send these commands but leave the
+  # socket-close in a state where `:tcp_closed` is not delivered promptly to
+  # this GenServer, leaving the upstream source/pipeline waiting on data
+  # that will never come. Emitting `:connection_closed` here drives the
+  # existing EOS path so the pipeline can drain and finalize.
+  defp do_handle_client_message(%Messages.Anonymous{name: name}, _header, state)
+       when name in ["FCUnpublish", "closeStream"] do
+    {:halt, %{state | events: [:connection_closed | state.events]}}
+  end
+
   defp do_handle_client_message(%Messages.Anonymous{} = message, _header, state) do
     Logger.debug("Unknown message: #{inspect(message)}")
 
