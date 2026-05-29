@@ -108,14 +108,23 @@ defmodule Membrane.RTMPServer do
 
   @impl true
   def init(server_options) do
+    # Supervise per-connection client handlers under a DynamicSupervisor with
+    # `:temporary` children. This isolates a crash in one connection (e.g. a
+    # malformed RTMP message from a single client) to that connection — the
+    # supervisor logs and discards the dead handler — instead of letting the
+    # exit propagate up the link chain (Listener -> RTMPServer) and take down
+    # the shared listening socket for every other client.
+    {:ok, client_supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
+
     pid =
       Task.start_link(Membrane.RTMPServer.Listener, :run, [
-        Map.merge(server_options, %{server: self()})
+        Map.merge(server_options, %{server: self(), client_supervisor: client_supervisor})
       ])
 
     {:ok,
      %{
        listener: pid,
+       client_supervisor: client_supervisor,
        port: nil,
        to_reply: [],
        use_ssl?: server_options.use_ssl?

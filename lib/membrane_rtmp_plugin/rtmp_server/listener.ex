@@ -116,14 +116,28 @@ defmodule Membrane.RTMPServer.Listener do
           end
       end
 
+    # Start the client handler under the server's DynamicSupervisor (not
+    # linked to this listener) so that a crash in one connection stays
+    # contained to that connection instead of cascading through the link
+    # chain and killing the shared listener.
     {:ok, client_reference} =
-      GenServer.start_link(ClientHandler,
-        socket: client,
-        use_ssl?: options.use_ssl?,
-        server: options.server,
-        handle_new_client: options.handle_new_client,
-        client_timeout: options.client_timeout
-      )
+      DynamicSupervisor.start_child(options.client_supervisor, %{
+        id: ClientHandler,
+        start:
+          {GenServer, :start_link,
+           [
+             ClientHandler,
+             [
+               socket: client,
+               use_ssl?: options.use_ssl?,
+               server: options.server,
+               handle_new_client: options.handle_new_client,
+               client_timeout: options.client_timeout
+             ]
+           ]},
+        restart: :temporary,
+        type: :worker
+      })
 
     case options.socket_module.controlling_process(client, client_reference) do
       :ok ->
