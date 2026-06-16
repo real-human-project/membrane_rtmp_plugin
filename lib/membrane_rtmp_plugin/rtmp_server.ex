@@ -9,6 +9,10 @@ defmodule Membrane.RTMPServer do
       It receives the client reference, `app` and `stream_key`, allowing custom processing,
       like sending the reference to another process. The function should return a `t:#{inspect(__MODULE__)}.client_behaviour_spec/0`
       which defines how the client should behave.
+  - handle_connected: An optional anonymous function called when a client's `connect` completes,
+      ahead of `handle_new_client` (which only fires once the client publishes). It receives the
+      client reference and `app`, letting the consumer observe the connect-to-publish window.
+      Defaults to nil.
   - port: Port on which RTMP server will listen. Defaults to 1935.
   - use_ssl?: If true, SSL socket (for RTMPS) will be used. Otherwise, TCP socket (for RTMP) will be used. Defaults to false.
   - ssl_options: SSL options to configure the SSL socket.
@@ -56,6 +60,7 @@ defmodule Membrane.RTMPServer do
           name: atom() | nil,
           handle_new_client: (client_ref :: pid(), app :: String.t(), stream_key :: String.t() ->
                                 client_behaviour_spec()),
+          handle_connected: (client_ref :: pid(), app :: String.t() -> any()) | nil,
           client_timeout: Membrane.Time.t()
         ]
 
@@ -64,6 +69,7 @@ defmodule Membrane.RTMPServer do
     use_ssl?: false,
     ssl_options: nil,
     name: nil,
+    handle_connected: nil,
     client_timeout: Membrane.Time.seconds(5)
   }
 

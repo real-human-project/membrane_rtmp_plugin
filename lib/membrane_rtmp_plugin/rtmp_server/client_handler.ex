@@ -103,6 +103,7 @@ defmodule Membrane.RTMPServer.ClientHandler do
        connect_completed_at: nil,
        notified_about_client?: false,
        handle_new_client: opts.handle_new_client,
+       handle_connected: opts.handle_connected,
        client_timeout: opts.client_timeout
      }}
   end
@@ -266,6 +267,9 @@ defmodule Membrane.RTMPServer.ClientHandler do
         }
 
       {:connected, connected_msg} ->
+        if state.handle_connected,
+          do: state.handle_connected.(self(), connected_msg.app)
+
         %{
           state
           | app: connected_msg.app,
