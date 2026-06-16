@@ -100,6 +100,7 @@ defmodule Membrane.RTMPServer.ClientHandler do
        server: opts.server,
        buffers_demanded: 0,
        published?: false,
+       connect_completed_at: nil,
        notified_about_client?: false,
        handle_new_client: opts.handle_new_client,
        client_timeout: opts.client_timeout
@@ -185,6 +186,8 @@ defmodule Membrane.RTMPServer.ClientHandler do
             handler_module -> {handler_module, %{}}
           end
 
+        log_publish_handshake_hold(state, stream_key)
+
         Process.send_after(
           self(),
           {:client_timeout, state.app, stream_key},
@@ -263,7 +266,11 @@ defmodule Membrane.RTMPServer.ClientHandler do
         }
 
       {:connected, connected_msg} ->
-        %{state | app: connected_msg.app}
+        %{
+          state
+          | app: connected_msg.app,
+            connect_completed_at: System.monotonic_time(:millisecond)
+        }
 
       {:published, publish_msg} ->
         %{
@@ -293,4 +300,20 @@ defmodule Membrane.RTMPServer.ClientHandler do
   end
 
   defp finish_handshake(state), do: state
+
+  # Time from the client's `connect` completing to its `publish` being processed —
+  # the window the standalone server spends holding the client's createStream/publish
+  # batch before `handle_new_client` fires. On the deferred-handshake path this is the
+  # multi-second hold that races the client's publish timeout; logged here, where both
+  # ends are observable, since `handle_new_client` runs after the hold has elapsed.
+  defp log_publish_handshake_hold(%{connect_completed_at: nil}, _stream_key), do: :ok
+
+  defp log_publish_handshake_hold(state, stream_key) do
+    hold_ms = System.monotonic_time(:millisecond) - state.connect_completed_at
+
+    Logger.info(
+      "[RTMPServer] publish_handshake hold_ms=#{hold_ms} " <>
+        "client_ref=#{inspect(self())} app=#{state.app} stream_key=#{stream_key}"
+    )
+  end
 end
