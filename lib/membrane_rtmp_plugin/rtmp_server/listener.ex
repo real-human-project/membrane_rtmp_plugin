@@ -132,6 +132,7 @@ defmodule Membrane.RTMPServer.Listener do
                use_ssl?: options.use_ssl?,
                server: options.server,
                handle_new_client: options.handle_new_client,
+               handle_connected: options.handle_connected,
                client_timeout: options.client_timeout
              ]
            ]},

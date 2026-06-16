@@ -36,6 +36,8 @@ defmodule Membrane.RTMP.SourceBin.IntegrationTest do
 
     pipeline = Task.await(pipeline_startup_task)
 
+    assert_receive {:client_connected, @app}, 5_000
+
     assert_buffers(%{
       pipeline: pipeline,
       sink: :video_sink,
@@ -240,12 +242,17 @@ defmodule Membrane.RTMP.SourceBin.IntegrationTest do
       Membrane.RTMP.Source.ClientHandlerImpl
     end
 
+    handle_connected = fn _client_ref, app ->
+      send(parent, {:client_connected, app})
+    end
+
     {:ok, server_pid} =
       Membrane.RTMPServer.start_link(
         port: port,
         use_ssl?: use_ssl?,
         ssl_options: ssl_options,
         handle_new_client: handle_new_client,
+        handle_connected: handle_connected,
         client_timeout: Membrane.Time.seconds(3)
       )
 
