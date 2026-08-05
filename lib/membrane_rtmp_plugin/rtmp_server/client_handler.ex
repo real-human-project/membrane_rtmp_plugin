@@ -111,13 +111,32 @@ defmodule Membrane.RTMPServer.ClientHandler do
     handle_data(data, state)
   end
 
+  # Who reclaims a handler once its connection has ended depends on whether the
+  # connection ever reached a consumer.
+  #
+  # Before `handle_new_client` runs there is no consumer, no handler module and
+  # nothing buffered, so the process can only sit in `:gen_server.loop/7`
+  # forever. Every accepted connection starts one of these, so leaving them
+  # behind leaks a process and a supervisor child entry per connection for the
+  # lifetime of the node. These stop themselves.
+  #
+  # After `handle_new_client` the consumer owns the lifecycle, and the handler
+  # must not stop on its own: `Source.ClientHandlerImpl` buffers payloads until
+  # the pipeline reaches `handle_playing` and sends `{:send_me_data, pid}`, so a
+  # handler that exited on the peer's FIN would discard media the consumer has
+  # not collected yet. `handle_connection_closed` still runs, which is what
+  # drives `end_of_stream`; the consumer stops the handler afterwards.
   @impl true
   def handle_info({:tcp_closed, socket}, %{use_ssl?: false} = state)
       when state.socket == socket do
-    events = [:connection_closed]
-    state = Enum.reduce(events, state, &handle_event/2)
+    connection_ended(state)
+  end
 
-    {:noreply, state}
+  @impl true
+  def handle_info({:tcp_error, socket, reason}, %{use_ssl?: false} = state)
+      when state.socket == socket do
+    Logger.warning("RTMP client socket error: #{inspect(reason)}")
+    connection_ended(state)
   end
 
   @impl true
@@ -127,10 +146,14 @@ defmodule Membrane.RTMPServer.ClientHandler do
 
   @impl true
   def handle_info({:ssl_closed, socket}, %{use_ssl?: true} = state) when state.socket == socket do
-    events = [:connection_closed]
-    state = Enum.reduce(events, state, &handle_event/2)
+    connection_ended(state)
+  end
 
-    {:noreply, state}
+  @impl true
+  def handle_info({:ssl_error, socket, reason}, %{use_ssl?: true} = state)
+      when state.socket == socket do
+    Logger.warning("RTMPS client socket error: #{inspect(reason)}")
+    connection_ended(state)
   end
 
   @impl true
@@ -147,12 +170,20 @@ defmodule Membrane.RTMPServer.ClientHandler do
   end
 
   @impl true
-  def handle_info({:client_timeout, app, stream_key}, state) do
-    if not state.published? do
-      Logger.warning("No demand made for client /#{app}/#{stream_key}, terminating connection.")
-      :gen_tcp.close(state.socket)
-    end
+  def handle_info({:client_timeout, app, stream_key}, %{published?: false} = state) do
+    Logger.warning("No demand made for client /#{app}/#{stream_key}, terminating connection.")
+    close_socket(state)
 
+    # This branch always stops, consumer or not. It fires only while the client
+    # is unpublished, which is how a rejected stream key is torn down, and its
+    # whole purpose is to terminate the connection rather than wait out a client
+    # that will never publish. Closing our own socket delivers no `:tcp_closed`,
+    # so it cannot inherit the stop from the clauses above.
+    {:stop, :normal, handle_event(:connection_closed, state)}
+  end
+
+  @impl true
+  def handle_info({:client_timeout, _app, _stream_key}, state) do
     {:noreply, state}
   end
 
@@ -283,6 +314,24 @@ defmodule Membrane.RTMPServer.ClientHandler do
       end
     end
   end
+
+  # Run the close callback, then reclaim the process only when no consumer was
+  # ever handed this connection. See the clauses above for why the two cases
+  # differ.
+  defp connection_ended(state) do
+    state = handle_event(:connection_closed, state)
+
+    if state.notified_about_client? do
+      {:noreply, state}
+    else
+      {:stop, :normal, state}
+    end
+  end
+
+  # Close through the module that opened the socket; `:gen_tcp.close/1` does not
+  # close an SSL socket.
+  defp close_socket(%{use_ssl?: true} = state), do: :ssl.close(state.socket)
+  defp close_socket(state), do: :gen_tcp.close(state.socket)
 
   defp finish_handshake(state) when not state.published? do
     {message_handler_state, events} =
